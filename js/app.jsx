@@ -1,5 +1,6 @@
-// App shell — loads reference data, polls the (simulated) API, owns filter
-// state, and lays out strip / rail / schematic / alerts / feed.
+// App shell — loads reference data, polls the (simulated) API, owns filter,
+// selection, view and live/paused state, and lays out strip / rail /
+// schematic / alerts / feed / detail drawer.
 
 (() => {
 
@@ -10,6 +11,17 @@ const { STATUS_RANK } = window.Fmt;
 
 const POLL_MS = 1000;
 const FEED_KEEP = 1500;
+const STORE = "wsm";                    // localStorage prefix for per-viewer preferences
+
+function usePref(key, initial) {
+  const [value, setValue] = useState(() => {
+    try { const v = localStorage.getItem(`${STORE}-${key}`); return v == null ? initial : JSON.parse(v); } catch { return initial; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(`${STORE}-${key}`, JSON.stringify(value)); } catch {}
+  }, [key, value]);
+  return [value, setValue];
+}
 
 window.EMPTY_FILTERS = () => ({ categories: new Set(), zones: new Set(), type: "all", status: "all", q: "" });
 
@@ -41,15 +53,26 @@ function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [history, setHistory] = useState([]);
   const [hoverZone, setHoverZone] = useState(null);
+  const [pinnedZone, setPinnedZone] = useState(null);
   const [showZones, setShowZones] = useState(false);
-  const [feedCollapsed, setFeedCollapsed] = useState(false);
+  const [feedSize, setFeedSize] = usePref("feed-size", "normal");
   const [feedFollow, setFeedFollow] = useState(false);
+  const [metOpen, setMetOpen] = usePref("weather-open", true);
+  const [builtInViews, setBuiltInViews] = useState([]);
+  const [savedViews, setSavedViews] = useState(() => window.ViewStore.load(`${STORE}-views`));
+  const [live, setLive] = useState(true);
+  const [queued, setQueued] = useState(0);
   const [speed, setSpeedState] = useState(1);
   const [theme, setTheme] = useState(readTheme);
 
   const cursor = useRef(0);
   const selectedRef = useRef(null);
   selectedRef.current = selectedId;
+  const liveRef = useRef(true);
+  liveRef.current = live;
+  const pending = useRef({ readings: [], alerts: null, clock: null });
+
+  useEffect(() => { window.ViewStore.store(`${STORE}-views`, savedViews); }, [savedViews]);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -64,8 +87,9 @@ function App() {
     const prep = [];
     if (!isNaN(t)) prep.push(API.sim.seek(t));
     if (!isNaN(sp)) { prep.push(API.sim.setSpeed(sp)); setSpeedState(sp); }
-    Promise.all(prep).then(() => Promise.all([API.getSite(), API.getSensors(), API.getScenarios(), API.getLatest(), API.getAlerts(), API.getReadings({ after: 0, limit: 400 })])
-      .then(([si, s, sc, snap, al, recent]) => {
+    Promise.all(prep).then(() => Promise.all([API.getSite(), API.getSensors(), API.getScenarios(), API.getLatest(), API.getAlerts(), API.getReadings({ after: 0, limit: 400 }), API.getViews()])
+      .then(([si, s, sc, snap, al, recent, vw]) => {
+        setBuiltInViews(vw);
         setSite(si);
         setSensors(s);
         setScenarios(sc);
@@ -78,7 +102,30 @@ function App() {
       .catch(err => setApiError(String(err)));
   }, []);
 
-  // Poll loop
+  // Apply a batch of new readings + the current alert list to the display
+  const apply = useCallback((readings, al, clk) => {
+    if (clk) setClock(clk);
+    if (al) setAlerts(al);
+    if (!readings.length) return;
+    setLatest(prev => {
+      const next = { ...prev };
+      readings.forEach(r => { next[r.sensorId] = r; });
+      return next;
+    });
+    setFeed(prev => readings.slice().reverse().concat(prev).slice(0, FEED_KEEP));
+    const sel = selectedRef.current;
+    if (sel) {
+      const mine = readings.filter(r => r.sensorId === sel);
+      // The history fetch and a poll can overlap; only append samples we don't have
+      if (mine.length) setHistory(h => {
+        const last = h.length ? h[h.length - 1].seq : 0;
+        return h.concat(mine.filter(r => r.seq > last)).slice(-180);
+      });
+    }
+  }, []);
+
+  // Poll loop. While paused, polling continues but batches queue up instead
+  // of changing the screen; Resume applies them all at once.
   useEffect(() => {
     if (!site) return;
     let alive = true;
@@ -89,21 +136,15 @@ function App() {
         if (!alive) return;
         cursor.current = batch.cursor;
         setPollMs(performance.now() - t0);
-        setClock(batch.clock);
-        setAlerts(al);
         setRate(r => r * 0.6 + (batch.readings.length / (POLL_MS / 1000)) * 0.4);
-        if (batch.readings.length) {
-          setLatest(prev => {
-            const next = { ...prev };
-            batch.readings.forEach(r => { next[r.sensorId] = r; });
-            return next;
-          });
-          setFeed(prev => batch.readings.slice().reverse().concat(prev).slice(0, FEED_KEEP));
-          const sel = selectedRef.current;
-          if (sel) {
-            const mine = batch.readings.filter(r => r.sensorId === sel);
-            if (mine.length) setHistory(h => h.concat(mine).slice(-180));
-          }
+        if (liveRef.current) {
+          apply(batch.readings, al, batch.clock);
+        } else {
+          const p = pending.current;
+          p.readings = p.readings.concat(batch.readings).slice(-FEED_KEEP * 2);
+          p.alerts = al;
+          p.clock = batch.clock;
+          setQueued(p.readings.length);
         }
         setApiError(null);
       } catch (err) {
@@ -112,7 +153,29 @@ function App() {
     };
     const id = setInterval(tick, POLL_MS);
     return () => { alive = false; clearInterval(id); };
-  }, [site]);
+  }, [site, apply]);
+
+  const toggleLive = () => {
+    if (!live) {
+      const p = pending.current;
+      apply(p.readings, p.alerts, p.clock);
+      pending.current = { readings: [], alerts: null, clock: null };
+      setQueued(0);
+    }
+    setLive(!live);
+  };
+
+  // Esc closes the drawer, then the pinned area banner
+  useEffect(() => {
+    if (!selectedId && !pinnedZone) return;
+    const onKey = e => {
+      if (e.key !== "Escape") return;
+      if (selectedId) setSelectedId(null);
+      else setPinnedZone(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId, pinnedZone]);
 
   // Selection → fetch history
   useEffect(() => {
@@ -146,11 +209,9 @@ function App() {
     [matchBase, filters.status, sensorsById]);
 
   const onSelect = useCallback(id => setSelectedId(prev => (prev === id ? null : id)), []);
-  const onZoneClick = useCallback(z => setFilters(f => {
-    const zones = new Set(f.zones);
-    zones.has(z) ? zones.delete(z) : zones.add(z);
-    return { ...f, zones };
-  }), []);
+  const onOpen = useCallback(id => setSelectedId(id), []);
+  // Clicking an area pins its banner (again, or on empty space, unpins)
+  const onZoneClick = useCallback(z => setPinnedZone(p => (z && p !== z ? z : null)), []);
 
   const ack = async id => { await API.acknowledgeAlert(id); setAlerts(await API.getAlerts()); };
   const ackAll = async () => { await API.acknowledgeAll(); setAlerts(await API.getAlerts()); };
@@ -168,7 +229,7 @@ function App() {
   const stats = API.sim.stats();
 
   return (
-    <div className={`app ${feedCollapsed ? "feed-collapsed" : ""}`}>
+    <div className={`app feed-${feedSize} ${live ? "" : "paused"}`}>
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
@@ -193,6 +254,11 @@ function App() {
           </span>
         </div>
         <div className="topbar-right">
+          <button className={`btn small live-btn ${live ? "is-live" : "is-paused"}`} aria-pressed={!live} onClick={toggleLive}
+                  title={live ? "Freeze the display; data keeps arriving in the background" : "Apply queued data and resume"}>
+            <span className="live-dot" aria-hidden="true" />
+            {live ? "Live" : `Paused${queued ? ` · ${queued.toLocaleString()} queued` : ""}`}
+          </button>
           <span className={`alarm-badge mono st-${worstAlert}`}>
             {worstAlert !== "normal" && <StatusIcon status={worstAlert} size={11} />} {unacked} UNACK
           </span>
@@ -211,40 +277,59 @@ function App() {
           filters={filters} setFilters={setFilters} sensors={sensors} latest={latest}
           onZoneHover={setHoverZone} showZones={showZones} setShowZones={setShowZones}
           sim={{ clock, scenarios, speed, setSpeed, seek }}
-        />
+        >
+          <ViewsSection
+            builtIn={builtInViews} saved={savedViews} filters={filters} onApply={setFilters}
+            onSave={v => setSavedViews(vs => vs.concat(v))}
+            onDelete={id => setSavedViews(vs => vs.filter(v => v.id !== id))}
+          />
+        </FilterRail>
 
         <section className="stage" aria-label="Well site schematic">
           <SiteSchematic
             sensors={sensors} latest={latest} alertBySensor={alertBySensor} isVisible={isVisible}
             selectedId={selectedId} onSelect={onSelect}
-            focusZones={filters.zones} hoverZone={hoverZone} onZoneHover={setHoverZone} onZoneClick={onZoneClick}
+            focusZones={filters.zones} hoverZone={hoverZone} pinnedZone={pinnedZone}
+            onZoneHover={setHoverZone} onZoneClick={onZoneClick}
             showZones={showZones}
           >
-            <MetCard latest={latest} />
+            <ZoneBanner
+              zone={hoverZone || pinnedZone} pinned={!!pinnedZone && (hoverZone || pinnedZone) === pinnedZone}
+              sensors={sensors} latest={latest} filters={filters} setFilters={setFilters}
+              onClose={() => setPinnedZone(null)}
+            />
+            <MetCard latest={latest} open={metOpen} setOpen={setMetOpen} />
             <div className="stage-note mono">
-              {visibleCount}/{sensors.length} sensors shown · click a sensor for detail · click a module to filter by location
+              {visibleCount}/{sensors.length} sensors shown · click a sensor for detail · click an area to name it and filter to it
             </div>
           </SiteSchematic>
         </section>
 
         <div className="side">
-          {selected && (
-            <SensorDetail
-              sensor={selected} reading={latest[selected.id]} history={history}
-              onClose={() => setSelectedId(null)} feedFollow={feedFollow} setFeedFollow={setFeedFollow}
-            />
-          )}
           <AlertsPanel
             alerts={alerts} sensorsById={sensorsById} onSelect={onSelect} selectedId={selectedId}
             onAck={ack} onAckAll={ackAll} isVisible={isVisible}
           />
         </div>
+
+        {selected && (
+          <>
+            <div className="drawer-scrim" onClick={() => setSelectedId(null)} />
+            <SensorDrawer
+              sensor={selected} reading={latest[selected.id]} history={history}
+              alert={alertBySensor[selected.id]} sensors={sensors} latest={latest} alerts={alerts}
+              onSelect={onOpen} onClose={() => setSelectedId(null)} onAck={ack}
+              feedFollow={feedFollow} setFeedFollow={setFeedFollow}
+            />
+          </>
+        )}
       </div>
 
       <RawFeed
         rows={feed} matchSample={matchSample} rate={rate}
-        collapsed={feedCollapsed} setCollapsed={setFeedCollapsed}
-        follow={feedFollow} selectedId={selectedId}
+        size={feedSize} setSize={setFeedSize}
+        follow={feedFollow} setFollow={setFeedFollow} selectedId={selectedId}
+        onOpen={onOpen} livePaused={!live}
       />
 
       <footer className="statusbar mono">
@@ -264,7 +349,7 @@ function App() {
 }
 
 // Weather card floating on the schematic
-function MetCard({ latest }) {
+function MetCard({ latest, open, setOpen }) {
   const v = (id, d) => latest[id]?.value ?? d;
   const dir = v("WDIR-MET-01", 170), wind = v("WIND-MET-01", 0), gust = v("GUST-MET-01", 0);
   const temp = v("AIRT-MET-01", 0), rain = v("RAIN-MET-01", 0), baro = v("BARO-MET-01", 0);
@@ -277,9 +362,28 @@ function MetCard({ latest }) {
       <span className="mono">{st(id) !== "normal" && <StatusIcon status={st(id)} size={9} />} {value}</span>
     </div>
   );
+  // Worst status across all weather sensors, for the collapsed chip
+  const worst = Object.values(latest)
+    .filter(r => r.category === "weather")
+    .reduce((w, r) => (STATUS_RANK[r.status] > STATUS_RANK[w] ? r.status : w), "normal");
+  if (!open) {
+    return (
+      <button className={`met-card met-chip st-${worst}`} onClick={() => setOpen(true)} aria-expanded="false"
+              aria-label="Show weather card">
+        <span className="met-head mono">WEATHER · PAD</span>
+        <span className="mono">{wind.toFixed(0)} mph {compass}</span>
+        {worst !== "normal" && <StatusIcon status={worst} size={10} />}
+        <span className="met-toggle" aria-hidden="true">▸</span>
+      </button>
+    );
+  }
   return (
     <div className="met-card" aria-label="Weather summary">
-      <div className="met-head mono">WEATHER · PAD</div>
+      <div className="met-head-row">
+        <span className="met-head mono">WEATHER · PAD</span>
+        <button className="btn icon met-toggle" aria-expanded="true" aria-label="Collapse weather card"
+                title="Collapse" onClick={() => setOpen(false)}>–</button>
+      </div>
       <div className="met-top">
         <svg width="54" height="54" viewBox="-27 -27 54 54" aria-hidden="true">
           <circle r="24" className="met-ring" />

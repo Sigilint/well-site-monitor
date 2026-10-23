@@ -529,7 +529,7 @@ function Callouts({ sensors, latest, isVisible }) {
 
 function SiteSchematic({
   sensors, latest, alertBySensor, isVisible, selectedId, onSelect,
-  focusZones, hoverZone, onZoneHover, onZoneClick, showZones, children,
+  focusZones, hoverZone, pinnedZone, onZoneHover, onZoneClick, showZones, children,
 }) {
   const wrapRef = useRef(null);
   const [hover, setHover] = useState(null);
@@ -544,8 +544,9 @@ function SiteSchematic({
   const onHover = (id, e) => {
     const box = wrapRef.current.getBoundingClientRect();
     setHover({ id, x: e.clientX - box.left, y: e.clientY - box.top, w: box.width });
+    onZoneHover(sensors.find(s => s.id === id)?.zone || null);
   };
-  const onLeave = () => setHover(null);
+  const onLeave = () => { setHover(null); onZoneHover(null); };
 
   const zoneEntries = Object.entries(ZONES);
   const hovered = hover && sensors.find(s => s.id === hover.id);
@@ -553,6 +554,7 @@ function SiteSchematic({
   return (
     <div className="schematic" ref={wrapRef}>
       <svg viewBox={`0 ${VB_Y} ${W} ${H - VB_Y}`} preserveAspectRatio="xMidYMid meet" className="schematic-svg"
+           onClick={() => onZoneClick(null)}
            role="img" aria-label="Well site schematic with sensor markers">
         <Sky storm={storm} lightningMi={v("LIGHTNING-MET-01", 75)} />
         <Ground />
@@ -572,15 +574,15 @@ function SiteSchematic({
         <Seismic pgv={v("SEIS-GND-01", 0)} />
         <Windsock mph={wind} driftSign={driftSign} />
 
-        {/* zones: hover to outline, click to filter */}
+        {/* zones: hover to name, click to pin the area banner */}
         <g className="zones">
           {zoneEntries.map(([key, z]) => {
             const [x, y, w, h] = z.rect;
-            const on = showZones || hoverZone === key || focusZones.has(key);
+            const on = showZones || hoverZone === key || pinnedZone === key || focusZones.has(key);
             return (
-              <g key={key} className={`zone ${on ? "on" : ""} ${focusZones.has(key) ? "focus" : ""}`}
+              <g key={key} className={`zone ${on ? "on" : ""} ${focusZones.has(key) ? "focus" : ""} ${pinnedZone === key ? "pinned" : ""}`}
                  onMouseEnter={() => onZoneHover(key)} onMouseLeave={() => onZoneHover(null)}
-                 onClick={() => onZoneClick(key)}>
+                 onClick={e => { e.stopPropagation(); onZoneClick(key); }}>
                 <rect x={x} y={y} width={w} height={h} rx="4" />
                 {on && <text x={x + 4} y={y + 10} className="zone-label">{z.label.toUpperCase()}</text>}
               </g>

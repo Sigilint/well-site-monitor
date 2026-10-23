@@ -245,6 +245,18 @@ const SCENARIOS = [
   },
 ];
 
-window.SiteDef = { SITE, SENSORS, SCENARIOS };
+// Built-in saved views (filter presets) offered to every user
+const VIEWS = [
+  { id: "all", name: "All sensors", filters: {} },
+  { id: "attention", name: "Needs attention", description: "Everything in warning or alarm", filters: { status: "attention" } },
+  { id: "well", name: "Well & artificial lift", filters: { zones: ["LAT", "SEP", "WB", "WH"] } },
+  { id: "tanks", name: "Tank battery", filters: { zones: ["TNK"] } },
+  { id: "fence", name: "Fenceline & neighbours", filters: { zones: ["COM", "FNW", "GTE"] } },
+  { id: "emissions", name: "Emissions & environment", filters: { categories: ["environment"] } },
+  { id: "below", name: "Below ground", filters: { zones: ["GND", "GW", "LAT", "PL", "WB"] } },
+  { id: "security", name: "Security & access", filters: { categories: ["security"] } },
+];
+
+window.SiteDef = { SITE, SENSORS, SCENARIOS, VIEWS };
 
 })();

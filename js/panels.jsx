@@ -1,10 +1,10 @@
-// Side panels: filter rail, category/ops strip, alerts list, sensor detail.
+// Side panels: filter rail, category/ops strip, alerts list.
 
 (() => {
 
-const { useState, useMemo, useRef } = React;
+const { useState, useMemo } = React;
 const { CATEGORIES, SENSOR_TYPES, ZONES } = window.Catalog;
-const { STATUS_LABEL, STATUS_RANK, fmtValue, fmtTime, fmtUnit, limitText } = window.Fmt;
+const { STATUS_RANK, fmtValue, fmtTime } = window.Fmt;
 
 const toggleIn = (set, key) => {
   const next = new Set(set);
@@ -21,7 +21,7 @@ const STATUS_FILTERS = [
   { value: "offline", label: "Offline" },
 ];
 
-function FilterRail({ filters, setFilters, sensors, latest, onZoneHover, showZones, setShowZones, sim }) {
+function FilterRail({ filters, setFilters, sensors, latest, onZoneHover, showZones, setShowZones, sim, children }) {
   const counts = useMemo(() => {
     const cat = {}, zone = {};
     sensors.forEach(s => {
@@ -49,6 +49,7 @@ function FilterRail({ filters, setFilters, sensors, latest, onZoneHover, showZon
 
   return (
     <aside className="rail" aria-label="Filters">
+      {children}
       <div className="rail-section">
         <label className="rail-title" htmlFor="q">Search</label>
         <input id="q" className="input" placeholder="ID, name or type…" value={filters.q}
@@ -333,119 +334,6 @@ function AlertsPanel({ alerts, sensorsById, onSelect, onAck, onAckAll, selectedI
   );
 }
 
-// ---------------- Sensor detail ----------------
-
-function Sparkline({ data, typeKey }) {
-  const [hi, setHi] = useState(null);
-  const ref = useRef(null);
-  const VW = 320, VH = 110, PAD_L = 4, PAD_R = 4, PAD_T = 8, PAD_B = 8;
-  const pts = data.filter(d => d.value != null);
-  if (pts.length < 2) return <div className="spark-empty mono">Collecting data…</div>;
-
-  const t = SENSOR_TYPES[typeKey];
-  let lo = Math.min(...pts.map(p => p.value)), up = Math.max(...pts.map(p => p.value));
-  const span = Math.max(up - lo, Math.abs(up) * 0.02, 0.5);
-  const lims = [];
-  if (t.limits?.hi) lims.push(["warning", t.limits.hi[0]], ["alarm", t.limits.hi[1]]);
-  if (t.limits?.lo) lims.push(["warning", t.limits.lo[0]], ["alarm", t.limits.lo[1]]);
-  const shown = lims.filter(([, v]) => v >= lo - span * 1.2 && v <= up + span * 1.2);
-  shown.forEach(([, v]) => { lo = Math.min(lo, v); up = Math.max(up, v); });
-  const pad = (up - lo) * 0.1 || 1;
-  lo -= pad; up += pad;
-
-  const t0 = pts[0].simT, t1 = pts[pts.length - 1].simT;
-  const x = s => PAD_L + (VW - PAD_L - PAD_R) * (t1 === t0 ? 0 : (s - t0) / (t1 - t0));
-  const y = v => PAD_T + (VH - PAD_T - PAD_B) * (1 - (v - lo) / (up - lo));
-  const d = pts.map((p, i) => `${i ? "L" : "M"}${x(p.simT).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
-
-  const onMove = e => {
-    const r = ref.current.getBoundingClientRect();
-    const sx = ((e.clientX - r.left) / r.width) * VW;
-    let best = 0;
-    pts.forEach((p, i) => { if (Math.abs(x(p.simT) - sx) < Math.abs(x(pts[best].simT) - sx)) best = i; });
-    setHi(best);
-  };
-  const hp = hi != null ? pts[hi] : null;
-  const last = pts[pts.length - 1];
-
-  return (
-    <div className="spark" ref={ref} onMouseMove={onMove} onMouseLeave={() => setHi(null)}>
-      <svg viewBox={`0 0 ${VW} ${VH}`} preserveAspectRatio="none" className="spark-svg">
-        {shown.map(([k, v], i) => (
-          <line key={i} x1={PAD_L} x2={VW - PAD_R} y1={y(v)} y2={y(v)} className={`lim lim-${k}`} />
-        ))}
-        <path d={d} className="spark-line" />
-        <circle cx={x(last.simT)} cy={y(last.value)} r="3" className="spark-dot" />
-        {hp && <line x1={x(hp.simT)} x2={x(hp.simT)} y1={PAD_T} y2={VH - PAD_B} className="spark-cross" />}
-        {hp && <circle cx={x(hp.simT)} cy={y(hp.value)} r="3.5" className="spark-dot hov" />}
-      </svg>
-      <div className="spark-axis mono">
-        <span>{fmtTime(pts[0].ts)}</span>
-        <span>{(t1 - t0).toFixed(0)} s window</span>
-        <span>{fmtTime(last.ts)}</span>
-      </div>
-      {shown.length > 0 && (
-        <div className="spark-legend mono">
-          {shown.some(s => s[0] === "warning") && <span><i className="lim-key warning" /> warn limit</span>}
-          {shown.some(s => s[0] === "alarm") && <span><i className="lim-key alarm" /> alarm limit</span>}
-        </div>
-      )}
-      {hp && (
-        <div className="spark-tip mono" style={{ left: `${(x(hp.simT) / VW) * 100}%` }}>
-          {fmtValue(hp.value, typeKey)} {fmtUnit(typeKey)} · {fmtTime(hp.ts)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SensorDetail({ sensor, reading, history, onClose, feedFollow, setFeedFollow }) {
-  const type = SENSOR_TYPES[sensor.type];
-  const cat = CATEGORIES[sensor.category];
-  const status = reading?.status || "normal";
-  return (
-    <section className={`detail st-${status}`} aria-label="Sensor detail">
-      <header className="panel-head">
-        <CategoryIcon category={sensor.category} size={18} />
-        <span className="panel-title">{cat.label}</span>
-        <span className="mono muted">{sensor.id}</span>
-        <button className="btn icon" aria-label="Close detail" onClick={onClose}>×</button>
-      </header>
-      <div className="detail-body">
-        <div className="detail-name">{sensor.label}</div>
-        <div className="detail-type">{type.name} · {ZONES[sensor.zone].label}</div>
-        <div className="detail-reading">
-          <span className="detail-value mono">{fmtValue(reading?.value, sensor.type)}</span>
-          <span className="detail-unit">{fmtUnit(sensor.type)}</span>
-          <span className={`pill st-${status}`}><StatusIcon status={status} size={10} /> {STATUS_LABEL[status]}</span>
-        </div>
-        <div className="detail-limits mono">{limitText(sensor.type)}</div>
-        <Sparkline data={history} typeKey={sensor.type} />
-        <div className="detail-section">
-          <div className="detail-h">Measures</div>
-          <p>{type.measures}</p>
-        </div>
-        <div className="detail-section">
-          <div className="detail-h">What it tells you</div>
-          <ul>{type.tells.map((t, i) => <li key={i}>{t}</li>)}</ul>
-        </div>
-        <dl className="detail-kv mono">
-          <dt>Node</dt><dd>{sensor.node}</dd>
-          <dt>Link</dt><dd>{sensor.link}</dd>
-          <dt>Period</dt><dd>{type.sim.period} s</dd>
-          <dt>Latency</dt><dd>{reading?.latencyMs ?? "—"} ms</dd>
-          <dt>Last</dt><dd>{reading ? fmtTime(reading.ts, true) : "—"}</dd>
-          <dt>Quality</dt><dd>{reading?.quality || "—"}</dd>
-        </dl>
-        <label className="mini-toggle">
-          <input type="checkbox" checked={feedFollow} onChange={e => setFeedFollow(e.target.checked)} />
-          Show only this sensor in the raw feed
-        </label>
-      </div>
-    </section>
-  );
-}
-
-Object.assign(window, { FilterRail, StatusStrip, AlertsPanel, SensorDetail });
+Object.assign(window, { FilterRail, StatusStrip, AlertsPanel });
 
 })();
