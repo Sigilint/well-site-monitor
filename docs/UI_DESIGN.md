@@ -31,24 +31,32 @@
 ## Layout
 
 The layout is the platform monitor's: a top bar, the status strip, then three
-columns (filter rail, schematic, detail and alerts), with the raw feed docked
+columns (views and filter rail, schematic, alerts), with the raw feed docked
 below and a status bar at the bottom.
+
+**Detail drawer.** It slides in next to the alerts column, so alerts stay
+visible. Below 1100 px it covers the screen from the right instead.
+
+**Overlays on the schematic:**
+- the **area banner**, top left
+- the collapsible **weather card**, top right
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ sigilint · Well 10H // API 42-439-34308 // Barnett // Tarrant // lat,lon │
-│                                                  UNACK · clock · theme   │
+│                                    Live · UNACK · clock · theme          │
 ├──────────────────────────────────────────────────────────────────────────┤
 │ Production Safety Environment Integrity Security Weather │ Well · Site   │
 │                                                           │ work · Access │
 │                                                           │ · Emissions · │
 │                                                           │ Neighbours    │
 ├────────────┬──────────────────────────────────────────┬──────────────────┤
-│ Filters    │  sky · mast · combustor · well · sep ·   │ Sensor detail    │
-│            │  compressor · meter · tanks · gate · homes│                  │
-│            │ ──────────────── ground ──────────────── ├──────────────────┤
-│            │  aquifer · monitor well · casing         │ Alerts           │
-│ Simulation │  Barnett lateral ═══════════════         │                  │
+│ Views      │ [area banner]               [weather]    │ Alerts           │
+│ Filters    │  sky · mast · combustor · well · sep ·   │                  │
+│            │  compressor · meter · tanks ┌──────────┐ │                  │
+│            │ ──────────── ground ────────│ Detail   │ │                  │
+│            │  aquifer · monitor well     │ drawer   │ │                  │
+│ Simulation │  Barnett lateral ═══════    └──────────┘ │                  │
 ├────────────┴──────────────────────────────────────────┴──────────────────┤
 │ Raw feed                                                                 │
 ├──────────────────────────────────────────────────────────────────────────┤
@@ -60,7 +68,7 @@ below and a status bar at the bottom.
 |---|---|
 | Above 1440 px | Rail 248 px · schematic · side 330 px; the strip shows category tiles and derived states side by side |
 | 1101–1440 px | Rail 220 px · side 300 px; categories and derived states on two rows |
-| 641–1100 px | Single column, page scrolls: schematic, alerts, filters, feed. Strip tiles three across. Header coordinates and the weather card shrink or hide |
+| 641–1100 px | Single column, page scrolls: schematic, alerts, filters, feed. Strip tiles three across. Header coordinates and the weather card shrink or hide. The drawer covers the screen from the right over a dimmed backdrop |
 | Up to 640 px | Tiles two across; secondary feed columns, weather card and stage note hidden; top bar wraps |
 
 Checked at 1600 px (dark and light) and 820 px. Phone widths have not been
@@ -185,8 +193,22 @@ shale, bricks for limestone) carry the distinction.
 
 - Sensor markers are focusable buttons whose label gives the name, id and
   status; Enter or Space selects one. Dimmed markers leave the tab order.
-- Zones outline on hover and toggle a location filter on click. The rail's
-  location list does the same and also works from the keyboard.
+- **Areas on the drawing:**
+  - Hovering an area outlines it and names it in the area banner, with a
+    one-line description, sensor count and status counts.
+  - Clicking pins the banner, which offers **Show only these N sensors**
+    (and **Add to filter** when other areas are already filtered).
+  - Clicking the area again, clicking empty space, Esc or × unpins it.
+  - The rail's location list filters directly and works from the
+    keyboard.
+- **Detail drawer:**
+  - Opens from a marker, an alert or a feed row (Enter on a focused row).
+  - Focus moves to its close button, and Esc closes it.
+  - Sensors listed under *Also at* open in place.
+- **Live / Paused** freezes the screen and shows a dashed outline around the
+  schematic. The feed's own Pause freezes only the feed.
+- **Saved views** mark the active view with `aria-pressed`. Saving asks for a
+  name inline, not in a browser prompt.
 - Category tiles in the strip toggle the category filter.
 - `prefers-reduced-motion` stops every animation:
   - pulses

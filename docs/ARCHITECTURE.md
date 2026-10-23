@@ -25,19 +25,24 @@ a bundler.
 | `js/api.jsx` | `window.SiteAPI` | The simulated server and the async API the UI calls |
 | `js/glyphs.jsx` | `CategoryIcon`, `StatusIcon`, `ShapePath`, `ShapeLetter`, `window.Fmt` | Category shapes, status icons, value / time / unit formatters |
 | `js/schematic.jsx` | `SiteSchematic` | The pad and subsurface drawing, live scene elements, markers, callouts, tooltip |
-| `js/panels.jsx` | `FilterRail`, `StatusStrip`, `AlertsPanel`, `SensorDetail` | Side panels, derived states, trend chart |
-| `js/feed.jsx` | `RawFeed` | The raw data feed |
-| `js/app.jsx` | (mounts `App`) | Initial load, polling, filter and selection state, layout, weather card |
+| `js/panels.jsx` | `FilterRail`, `StatusStrip`, `AlertsPanel` | Filter rail, status strip and derived states, alert list |
+| `js/feed.jsx` | `RawFeed` | The raw data feed: match-filters, clear, size, row click, new-row flash |
+| `js/drawer.jsx` | `SensorDrawer` | The detail drawer and its trend chart |
+| `js/views.jsx` | `ViewsSection`, `ViewStore` | Saved views in the rail; per-browser storage of saved views |
+| `js/zonebanner.jsx` | `ZoneBanner` | The area banner at the top of the schematic |
+| `js/app.jsx` | (mounts `App`) | Initial load, polling and live/paused, filter, selection, view and area state, layout, weather card |
 | `styles.css` | | Tokens for both themes, layout, scene and component styles, breakpoints |
 | `scripts/gen-catalog-doc.js` | | Regenerates the tables in `docs/SENSOR_CATALOG.md` |
 
 Load order: `catalog` → `site` → `api` → `glyphs` → `schematic` → `panels` →
-`feed` → `app`.
+`feed` → `drawer` → `views` → `zonebanner` → `app`.
 
 ### Relationship to the platform monitor
 
-`api.jsx`, `glyphs.jsx`, `panels.jsx`, `feed.jsx`, `app.jsx` and most of
-`styles.css` began as copies of `offshore-platform-monitor`. They were changed
+`feed.jsx`, `drawer.jsx`, `views.jsx` and `zonebanner.jsx` are identical in
+both projects; keep them in sync. `api.jsx`, `glyphs.jsx`, `panels.jsx`,
+`app.jsx` and most of `styles.css` began as copies of
+`offshore-platform-monitor`. They were changed
 in these places:
 
 | Area | Change |
@@ -70,8 +75,8 @@ other. The warm-up fix of 2026-10-23 is an example.
                                                                       │ props
                        ┌───────────────┬──────────────┬───────────────┼───────────┐
                        ▼               ▼              ▼               ▼           ▼
-                  StatusStrip     FilterRail   SiteSchematic    SensorDetail   RawFeed
-                  (deriveOps)                                   + AlertsPanel
+                  StatusStrip     FilterRail   SiteSchematic    AlertsPanel    RawFeed
+                  (deriveOps)     + Views      + ZoneBanner     SensorDrawer
 ```
 
 The UI never reads simulator state directly. It only calls `SiteAPI` methods,
@@ -199,6 +204,18 @@ Each alert records its peak value and the limit crossed.
   - New samples update `latest`.
   - They are prepended to the feed, which is capped at 1,500.
   - They are appended to the selected sensor's history.
+- **Live / Paused:** while paused, polling continues but each batch is
+  queued; Resume applies the queued readings, latest alerts and clock in one
+  go.
+- **Views:** built-in views come from `getViews()` (`VIEWS` in `site.jsx`).
+  Saved views are kept in `localStorage` (`wsm-views`) for the demo.
+- **Per-viewer preferences:** theme, feed size and whether the weather card
+  is open are stored under the `wsm-` prefix. Every read and write is
+  wrapped, so the page still works without storage.
+- **Area banner:** hovering an area, marker or rail location sets
+  `hoverZone`; clicking an area sets `pinnedZone`. The banner shows the
+  hovered area, falling back to the pinned one. Filter buttons appear only
+  when it's pinned. Esc closes the drawer first, then unpins.
 - **Filters:** one object, `{ categories, zones, type, status, q }`.
   - `isVisible(sensor)` controls dimming on the drawing and the alert filter.
   - `matchSample(reading)` filters the feed.
@@ -242,7 +259,7 @@ layers, back to front:
 | `Combustor` | live | Lit (glow and heat shimmer) or pilot out (vapour and label) |
 | `Gate`, `Vehicles` | live | Gate leaf open or closed; lease operator's pickup, or an unscheduled truck when the gate is open with nobody badged in |
 | `NoiseArcs`, `Seismic`, `Windsock` | live | Compressor noise when the residence monitor is abnormal; ground ripples; wind direction and lift |
-| Zones | interactive | Hover outlines; click toggles a location filter |
+| Zones | interactive | Hover outlines the area and names it in the area banner; click pins the banner |
 | `GasDetections` | live | Dashed outline around gas detectors in warning or alarm per zone, with a wind-drift arrow |
 | Markers, callouts | live | One marker per sensor; value callouts placed to avoid overlap |
 
@@ -296,6 +313,9 @@ differences:
   ```
 
 - Readings have `link` set to `wired`, `lora` or `cellular`.
+- `getViews()` → `GET /views` returns the built-in views,
+  `{ id, name, description?, filters, builtIn: true }[]`.
+- Each zone has a `desc` one-liner, which the area banner shows.
 - Binary sensors report `0` or `1`. Their type in `getCatalog()` carries
   `binary: ["CLOSED", "OPEN"]`.
 
