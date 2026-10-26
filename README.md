@@ -165,3 +165,7 @@ getScenarios(), sim.*    demo-only controls
 
 After editing `js/catalog.jsx` or placements, regenerate the doc tables with
 `node scripts/gen-catalog-doc.js`.
+
+## Deployment
+
+Live at **https://wellsite.sigilint.com**, also served at `https://sigilint-well-site-monitor.netlify.app`. It is the Netlify site `sigilint-well-site-monitor`, which deploys automatically on every push to `main` of `Sigilint/well-site-monitor`. Build settings are in `netlify.toml`: no build step, and the repo root is published. See `DEPLOYMENT.md` in `Sigilint/sigilint-web` for how all the Sigilint sites are hosted.
